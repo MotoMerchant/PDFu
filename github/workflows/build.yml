@@ -1,0 +1,56 @@
+# Builds PDFu.exe on GitHub's Windows machines.
+#  - Every push and pull request: runs the tests, builds the .exe, self-tests it,
+#    and attaches it to the run as a downloadable "PDFu-windows" artifact.
+#  - Pushing a tag like v1.0.0: also publishes a GitHub Release with PDFu.exe.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed only to create the Release on tags
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --prefer-binary --only-binary=pikepdf,pythonnet,clr_loader,cffi,lxml,pillow -r requirements-dev.txt
+
+      - name: Test
+        run: python -m pytest -q tests
+
+      - name: Build PDFu.exe
+        run: python -m PyInstaller --noconfirm --clean --log-level WARN pdfu.spec
+
+      - name: Self-test the build
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          Start-Process -FilePath "dist\PDFu.exe" -ArgumentList "--selftest", "`"$report`"" -Wait
+          Get-Content $report
+          if ((Get-Content $report -TotalCount 1) -ne "OK") { exit 1 }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: PDFu-windows
+          path: dist/PDFu.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/PDFu.exe
+          generate_release_notes: true
